@@ -79,7 +79,7 @@ class System:
         try:
             # Test if s is None.
             if s is None:
-                result = input()
+                result = input('ftp>')
             else:
                 result = input(s)
 
