@@ -27,22 +27,22 @@ def main():
         port = client.DEFAULT_CONNECT_PORT
 
     # Connect client to host no default port and receive data response.
-    data = client.connect(host, port)
+    res = client.connect(host, port)
 
     # Test if server response indicates user credentials are needed.
-    if (client.credentials_needed(data)):
+    if (client.credentials_needed(res)):
         # Get user credentials from user.
         user, pswd = System.get_account_info(host, port)
 
         # Send credentials to server.
-        data = client.login(user, pswd)
+        res = client.login(user, pswd)
 
         # Test if login was unsuccessful.
-        if (not client.login_successful(data)):
+        if (not client.login_successful(res)):
             # Display error and terminate processing.
-            System.exit_('Server response: {0}'.format(data.decode()))
+            System.exit_('Server response: {0}'.format(res.decode()))
     else:
-        System.exit_('Server response: {0}'.format(data.decode()))
+        System.exit_('Server response: {0}'.format(res.decode()))
 
     System.display('Login Successful.')
     System.display('Available Commands: ')
@@ -63,10 +63,12 @@ def main():
 
 class Client:
     DEFAULT_CONNECT_PORT = 21
-    DEFAULT_DATA_PORT = 20
+    DATA_P1 = 154
+    DATA_P2 = 185
 
     NEW_USER = 220
     LOGGED_IN = 230
+    PATHN_CREATED = 257
     PASSWORD_NEEDED = 331
     # LOGIN_INCORRECT = 530
 
@@ -82,13 +84,12 @@ class Client:
 
     def __init__(self, filename):
         self.logger = Logger(filename)
-        self.socket = socket.socket()
-        self.host = None
-        self.port = None
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.data_sock = None
 
     #connect(host, port)
     def connect(self, host, port=DEFAULT_CONNECT_PORT):
-        data = None
+        res = None
 
         try:
             # Connect to host on given port.
@@ -96,58 +97,54 @@ class Client:
             self.logger.write_log(
                 'Connecting to {0} on port {1}.'.format(host, port))
 
-            # Receive connection confirmation.
-            data = self.socket.recv(1024)
-            self.logger.write_log('Received: {0}'.format(repr(data)))
-
-            # Record current host and port.
-            self.host = host
-            self.port = port
+            # Get server response.
+            res = self.get_server_response()
+            self.log_res_received(res)
 
         except TimeoutError as err:
             self.logger.write_log('A timeout error occurred: {0}'.format(err))
             System.exit_('A timeout error occurred: {0}'.format(err))
 
-        return data
+        return res
 
     def disconnect(self):
         discon_str = 'QUIT'
 
         # Send quit.
         self.socket.send((discon_str + '\r\n').encode())
-        self.logger.write_log('Sent: {0}'.format(discon_str))
+        self.log_msg_sent(discon_str)
 
-        # Receive server response.
-        data = self.socket.recv(4096)
-        self.logger.write_log('Received: {0}'.format(repr(data)))
+        # Get server response.
+        res = self.get_server_response()
+        self.log_res_received(res)
 
     #login(user, pswd=None)
     def login(self, user, pswd=None):
-        data = None
+        res = None
         user_str = 'USER {0}'.format(user)
 
         try:
             # Send username.
             self.socket.send((user_str + '\r\n').encode())
-            self.logger.write_log('Sent: {0}'.format(user_str))
+            self.log_msg_sent(user_str)
 
-            # Receive username confirmation.
-            data = self.socket.recv(4096)
-            self.logger.write_log('Received: {0}'.format(repr(data)))
+            # Get server response.
+            res = self.get_server_response()
+            self.log_res_received(res)
 
             # Test if reply code indicates password needed.
-            if self.parse_reply_code(data) == self.PASSWORD_NEEDED:
+            if self.parse_reply_code(res) == self.PASSWORD_NEEDED:
                 # Test if password is given.
                 if pswd is not None:
                     pass_str = 'PASS {0}'.format(pswd)
 
                     # Send password.
                     self.socket.send((pass_str + '\r\n').encode())
-                    self.logger.write_log('Sent: {0}'.format(pass_str))
+                    self.log_msg_sent(pass_str)
 
-                    # Receive password confirmation.
-                    data = self.socket.recv(4096)
-                    self.logger.write_log('Received: {0}'.format(repr(data)))
+                    # Get server response.
+                    res = self.get_server_response()
+                    self.log_res_received(res)
 
                 else:
                     self.logger.write_log(
@@ -158,22 +155,22 @@ class Client:
             self.logger.write_log('An error occurred: {0}'.format(err))
             System.exit_('An error occurred: {0}'.format(err))
 
-        return data
+        return res
 
-    def parse_reply_code(self, data):
+    def parse_reply_code(self, res):
         result = None
 
-        if data is not None:
-            # Test data type.
-            if isinstance(data, bytes):
-                data_str = data.decode().split(' ')[0]
+        if res is not None:
+            # Test response data type.
+            if isinstance(res, bytes):
+                res_str = res.decode().split(' ')[0]
 
-            elif isinstance(data, str) and len(data) > 0:
-                data_str = data.split(' ')[0]
+            elif isinstance(res, str) and len(res) > 0:
+                res_str = res.split(' ')[0]
 
             try:
                 # Cast code to int.
-                result = int(data_str)
+                result = int(res_str)
 
             except Exception:
                 self.logger.write_log('Server reply code unkown.')
@@ -213,22 +210,85 @@ class Client:
 
         return is_quit
 
+    # def open_data_chan(self):
+    #     self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #     host_name = socket.gethostname()
+    #     host_addr = socket.gethostbyname(host_name)
+    #     self.data_sock.bind((host_addr, (self.DATA_P1*256) + self.DATA_P2))
+    #     self.data_sock.listen(1)
+
+    def open_data_chan(self, pasv_res):
+        # Parse host and port.
+        host_addr, p1, p2 = self.parse_host_and_port(pasv_res)
+        print('host_addr: ' + host_addr)
+
+        self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.data_sock.connect((host_addr, (p1*256) + p2))
+
+    def parse_host_and_port(self, res):
+        # Decode response.
+        res_str = res.decode()
+
+        # Get indices of left and right parentheses.
+        left_paren = res_str.find('(') + 1
+        right_paren = res_str.find(')')
+
+        # Split response substring by comma.
+        s = res_str[left_paren:right_paren].split(',')
+
+        # Join host on period.
+        host_addr = '.'.join(s[0:4])
+
+        return host_addr, int(s[4]), int(s[5])
+
+    def display_incoming_data(self):
+        # Accept the connection.
+        conn, addr = self.data_sock.accept()
+
+        incoming_data = True
+        while incoming_data:
+            # Reveive incoming data.
+            data = conn.recv(4096)
+
+            # Test if data was received.
+            if data:
+                System.display(data)
+            else:
+                incoming_data = False
+
+    def send_pasv_cmd(self):
+        pasv_str = 'PASV'
+
+        # Send PASV command.
+        self.socket.send((pasv_str + '\r\n').encode())
+        self.log_msg_sent(pasv_str)
+
+        # Get server response.
+        res = self.get_server_response()
+        self.log_res_received(res)
+
+        return res
+
+    # def send_port_cmd(self):
+        # host_name = socket.gethostname()
+        # host_addr = socket.gethostbyname(host_name)
+        # port_str = 'PORT {0},{1},{2}'.format(
+        #     host_addr.replace('.', ','), self.DATA_P1, self.DATA_P2)
+        # print('port_str: ' + port_str)
+
+        # # Send PORT command.
+        # self.socket.send((port_str + '\r\n').encode())
+        # self.log_msg_sent(port_str)
+
+        # # Get server response.
+        # print('waiting for port reply...')
+        # res = self.get_server_response()
+        # self.log_res_received(res)
+
     def run_help(self):
         # Display the list of available commands.
         System.display('Some commands are abbreviated: ')
         System.display_list(self.AVAIL_CMDS)
-
-    def run_port(self):
-        port_str = 'PORT {0},0,20'.format(self.host.replace('.', ',')) 
-
-        # Send PORT command.
-        self.socket.send((port_str + '\r\n').encode())
-        self.logger.write_log('Sent: ' + port_str)
-
-        # Receive server response.
-        data = self.socket.recv(4096)
-        self.logger.write_log('Received: ' + repr(data))
-
 
     def run_list(self, args):
         dirs = ''
@@ -237,32 +297,59 @@ class Client:
 
         list_str = 'LIST ' + dirs
 
+        # Send PASV command.
+        pasv_res = self.send_pasv_cmd()
+
         # Open data channel.
-        self.run_port()
-        
+        self.open_data_chan(pasv_res)
+
+        # Get server response.
+        res = self.data_sock.recv(2048)
+        self.log_res_received(res)
+
+        # # Send PORT command.
+        # self.send_port_cmd()
+
         # Send list command.
         self.socket.send((list_str + '\r\n').encode())
-        self.logger.write_log('Sent: ' + list_str)
+        self.log_msg_sent(list_str)
 
-        # Receive server response.
-        data = self.socket.recv(4096)
-        self.logger.write_log('Received: ' + repr(data))
+        # Display the requested data.
+        print('skipping data retieval')
+        exit('')
+        # self.display_incoming_data()
 
-        return data
-        
+        # Get server response.
+        res = self.get_server_response()
+        self.log_res_received(res)
+
+        return res
 
     def run_pwd(self, args):
         pwd_str = 'PWD'
 
         # Send PWD command.
         self.socket.send((pwd_str + '\r\n').encode())
-        self.logger.write_log('Sent: ' + pwd_str)
+        self.log_msg_sent(pwd_str)
 
-        # Receive server response.
-        data = self.socket.recv(4096)
-        self.logger.write_log('Received: ' + repr(data))
+        # Get server response.
+        res = self.get_server_response()
+        self.log_res_received(res)
 
-        return data
+        # Parse reply code.
+        reply_code = self.parse_reply_code(res)
+
+        # Test if code indicates success.
+        if reply_code == self.PATHN_CREATED:
+            # Parse the current directory from response.
+            pwd = res.decode().split('"')[1]
+            System.display(pwd)
+
+        else:
+            System.display(
+                'There was an error while retieving the current directory.')
+
+        return res
 
     def run_cwd(self, args):
         #
@@ -297,11 +384,20 @@ class Client:
     def is_put(self, cmd):
         return cmd.lower() == self.PUT.lower()
 
-    def credentials_needed(self, data):
-        return self.parse_reply_code(data) == self.NEW_USER
+    def credentials_needed(self, res):
+        return self.parse_reply_code(res) == self.NEW_USER
 
-    def login_successful(self, data):
-        return self.parse_reply_code(data) == self.LOGGED_IN
+    def login_successful(self, res):
+        return self.parse_reply_code(res) == self.LOGGED_IN
+
+    def get_server_response(self):
+        return self.socket.recv(2048)
+
+    def log_msg_sent(self, msg):
+        self.logger.write_log('Sent: ' + msg)
+
+    def log_res_received(self, res):
+        self.logger.write_log('Received: ' + repr(res))
 
 
 if __name__ == '__main__':
