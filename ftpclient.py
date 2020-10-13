@@ -5,9 +5,10 @@
 #
 # This module is the major module of the FTP client, with the main processing loop.
 
-import sys
-import socket
+from systemhelper import get_ftp_args, exit_
 from mylogger import Logger
+# from mysocket import Socket
+import socket
 
 """main()
 The main processing loop of the FTP client. It initiates the TCP scoket and
@@ -16,68 +17,111 @@ begins the conersation for the FTP server.
 
 
 def main():
+    USERNAME = 'cs472'
+    PASSWORD = 'hw2ftp'
+
     # Get command line args
-    host, filename, port = get_sys_args()
+    host, filename, port = get_ftp_args()
+    
+    # Initialize client with log filename.
+    client = Client(filename)
 
-    # Create a logger instance with log filename.
-    logger = Logger(filename)
-    logger.write_log('Connecting to ' + host + ' on port ' + str(port) + '.')
+    # Connect client to host no given port and receive response.
+    data = client.connect(host, port)
 
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((host, port))
-            sock.sendall(b'Yo')
-            data = sock.recv(1024)
-            print('Got: ' + repr(data))
-    except TimeoutError as err:
-        exit_('A timeout error occurred: {0}'.format(err))
+    # Test if user credentials are needed.
+    if (client.parse_reply_code(data) == client.NEW_USER):
+        # Send credentials to server.
+        data = client.login(USERNAME, PASSWORD)
 
 
-"""get_sys_args()
-Handles potential errors with the command line args. If errors exist with the
-args then the program exits. Otherwise, returns an array of the system args as
-string in the form: [<HOST>, <FILENAME>, <PORT>]
-"""
+class Client:
+    NEW_USER = 220
+    LOGGED_IN = 230
+    PASSWORD_NEEDED = 331
 
+    def __init__(self, filename):
+        self.logger = Logger(filename)
+        self.socket = socket.socket()
 
-def get_sys_args():
-    num_args = len(sys.argv)
+    #connect(host, port)
+    def connect(self, host, port):
+        data = None
 
-    # Test if no host given.
-    if num_args < 2:
-        exit_('host argument is required.')
-
-    # Test if no log filename give.
-    elif num_args < 3:
-        exit_('log filename argument is required')
-
-    # Test if port is specified.
-    elif num_args >= 4:
         try:
-            # Test if port can be casted to int
-            port = int(sys.argv[3])
-        except ValueError:
-            exit_('port number must be a positive integer (default is 21).')
-    else:
-        port = 21
+            # Connect to host on given port.
+            self.socket.connect((host, port))
+            self.logger.write_log('Connecting to {0} on port {1}.'.format(host, port))
 
-    return [sys.argv[1], sys.argv[2], port]
+            # Receive connection confirmation.
+            data = self.socket.recv(1024)
+            self.logger.write_log('Received: {0}.'.format(repr(data)))
+
+        except TimeoutError as err:
+            self.logger.write_log('A timeout error occurred: {0}'.format(err))
+            exit_('A timeout error occurred: {0}'.format(err))
+
+        return data
+
+    #login(user, pswd=None)
+    def login(self, user, pswd=None):
+        data = None
+        user_str = 'USER {0}'.format(user)
+        
+        try:
+            # Send username.
+            self.socket.send((user_str + '\r\n').encode())
+            self.logger.write_log('Sent: ' + user_str + '.')
+
+            # Receive username confirmation.
+            data = self.socket.recv(4096)
+            self.logger.write_log('Received: {0}.'.format(repr(data)))
+
+            # Test if reply code indicates password needed.
+            if self.parse_reply_code(data) == self.PASSWORD_NEEDED:
+                # Test if password is given.
+                if pswd is not None:
+                    pass_str = 'PASS {0}'.format(pswd)
+
+                    # Send password.
+                    self.socket.send((pass_str + '\r\n').encode())
+                    self.logger.write_log('Sent: ' + pass_str + '.')
+
+                    # Receive password confirmation.
+                    data = self.socket.recv(4096)
+                    self.logger.write_log('Received: {0}.'.format(repr(data)))
+
+                else:
+                    self.logger.write_log('A password is required for account.')
+                    exit_('A password is required for account.')
+
+        except Exception as err:
+            self.logger.write_log('An error occurred: {0}'.format(err))
+            exit_('An error occurred: {0}'.format(err))
+
+        return data
+
+    def parse_reply_code(self, data):
+        result = None
+
+        if data is not None:
+            # Test data type.
+            if isinstance(data, bytes):
+                data_str = data.decode().split(' ')[0]
+
+            elif isinstance(data, str) and len(data) > 0:
+                data_str = data.split(' ')[0]
+
+            try:
+                # Cast code to int.
+                result = int(data_str)
+                
+            except Exception as err:
+                self.logger.write_log('Server reply code unkown.')
+                exit_('Server reply code unkown.')
 
 
-"""exit_(msg)
-Prints the error message passed to it by msg to the console and then exits. If 
-the optional argument isArgErr is passed as True, then the correct usage of the 
-program is also displayed before exiting.
-"""
-
-
-def exit_(msg, isArgErr=False):
-    print('Error: ' + msg)
-
-    if isArgErr:
-        print('Usage: ftpclient <HOST> <FILENAME> [Optional: <PORT>]')
-
-    exit('exiting')
+        return result
 
 
 if __name__ == '__main__':
