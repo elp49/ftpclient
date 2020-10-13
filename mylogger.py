@@ -19,12 +19,12 @@ class Logger:
     def __init__(self, filename):
         self.filename = filename
 
-    """get_date_str()
-    Uses the datetime library to return a custom formatted datetime string of 
-    the current time.
+    """get_datetime_str()
+    Uses the datetime library to return a custom formatted string of the current
+    datetime.
     """
 
-    def get_date_str(self):
+    def get_datetime_str(self):
         return datetime.datetime.now().strftime('%x %X.%f')
 
     """write_log(log_str)
@@ -34,11 +34,18 @@ class Logger:
     """
 
     def write_log(self, log_str):
-        line = self.get_date_str() + ' ' + log_str
+        # Append line separator, datetime, and log string to line.
+        line = self.get_datetime_str() + ' ' + str(log_str) + self.line_sep
 
         # Test if filename is defined.
         if self.filename is not None and len(self.filename) > 0:
-            with open(self.filename, 'a') as log_file:
-                log_file.write(self.line_sep + line)
+            try:
+                with open(self.filename, 'a') as log_file:
+                    # Append the line to log file.
+                    log_file.write(line)
+
+            except Exception as err:
+                print('There was an error while writing to the log file {0}: {1}'.format(
+                    self.filename, err))
         else:
-            print(self.line_sep + line)
+            print(line)
