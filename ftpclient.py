@@ -30,7 +30,7 @@ def main():
     data = client.connect(host, port)
 
     # Test if user credentials are needed.
-    if (client.parse_reply_code(data) == client.NEW_USER):
+    if (client.credentials_needed(data)):
         # Send credentials to server.
         data = client.login(USERNAME, PASSWORD)
 
@@ -116,12 +116,15 @@ class Client:
                 # Cast code to int.
                 result = int(data_str)
                 
-            except Exception as err:
+            except Exception:
                 self.logger.write_log('Server reply code unkown.')
                 exit_('Server reply code unkown.')
 
 
         return result
+
+    def credentials_needed(self, data):
+        return self.parse_reply_code(data) == self.NEW_USER
 
 
 if __name__ == '__main__':

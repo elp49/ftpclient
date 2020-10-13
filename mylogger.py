@@ -2,7 +2,7 @@
 # Edward Parrish
 # mylogger.py
 #
-# This module is the logger module of the ftp client. It contains a logger class
+# This module is the logger module of the ftp client. It contains a Logger class
 # that is used by the major module to handle logging.
 
 import datetime
