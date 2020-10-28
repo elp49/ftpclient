@@ -1,8 +1,6 @@
-Edward Parrish
+#FtpClient
 
-FtpClient uses the latest version of python3.
-
-Usage: python3 ftpclient.py <HOST> <FILENAME> [optional: <PORT>]
+##Usage: python3 ftpclient.py <HOST> <FILENAME> [optional: <PORT>]
 
     HOST        the host address of the desired FTP server
     FILENAME    the relative path to a log file for recording ftp messages
@@ -22,7 +20,5 @@ commands displayed. The available commands are described below:
     pwd         PRINT WORKING DIRECTORY
     quit        QUIT
 
-Issues:
-- The FTP client does not successfully establish a data connection to a server. 
-This renders the get, cd, ls, and put commands useless. Attempting these commands
-does not have any effect.
+##Issues:
+- The FTP client does not successfully establish a data connection to a server. This renders the get, cd, ls, and put commands useless. Attempting these commands does not have any effect.
