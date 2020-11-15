@@ -2,17 +2,20 @@ Edward Parrish
 
 FtpClient uses the latest version of python3.
 
-Usage: python3 ftpclient.py <HOST> <FILENAME> [optional: <PORT>]
 
-    HOST        the host address of the desired FTP server
-    FILENAME    the relative path to a log file for recording ftp messages
+Usage:
+    python3 ftpclient.py [-v] host filename [port]
 
-    optional:
-    PORT        the desired port number to connect to the FTP server (default: 21)
+    -v          Suppresses display of server responses.
+    host        Specifies the host address of the FTP server to connnect to.
+    filename    Specifies the file to write sent and received FTP messages.
+    port        Specifies the port number for the FTP server (default: 21).
 
 
-Once the program is running, you can use the "help" command to have a list of 
-commands displayed. The available commands are described below:
+Once the client is started, it will immediately attempt to connect to the host
+machine specified by its host address in the command line on the specified port
+(or default port 21 is none is given). The "help" command lists the available
+commands:
 
     cd          CHANGE WORKING DIRECTORY
     get         RETRIEVE FILE
@@ -22,7 +25,13 @@ commands displayed. The available commands are described below:
     pwd         PRINT WORKING DIRECTORY
     quit        QUIT
 
+
 Issues:
-- The FTP client does not successfully establish a data connection to a server. 
-This renders the get, cd, ls, and put commands useless. Attempting these commands
-does not have any effect.
+ - The FTP client does not successfully establish a data connection to a server.
+ This renders the get, cd, ls, and put commands useless. Attempting these
+ commands does not have any effect.
+
+
+Testing:
+    This code has been tested locally using a Debian-derived Linux distribution
+    application on Windows 10 OS as well as on Drexel's tux machine.

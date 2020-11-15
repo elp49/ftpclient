@@ -1,404 +1,247 @@
 #!/usr/bin/env python3
-# CS472 - Homework #2
+# CS472 - Homework #4
 # Edward Parrish
 # ftpclient.py
 #
-# This module is the major module of the FTP client, with the main processing loop.
+# This module is the major module of the FTP client. It containes the main
+# processing loop that receives command line input from the user .
 
-from systemhelper import System
-from mylogger import Logger
+from util import System
+from logger import Logger
+from exceptions import ServerReplyError
 import socket
+import threading
 
-"""main()
-The main processing loop of the FTP client. It initiates the TCP scoket and
-begins the conersation for the FTP server.
-"""
+global logger
+DEFAULT_ENCODING = 'ISO-8859-1'
 
 
-def main():
-    # Get command line args
-    host, filename, port = System.get_ftp_args()
+def main(client, host, port):
+    '''main(client)
+    The main processing loop of the FTP Client.'''
 
-    # Initialize client with log filename.
-    client = Client(filename)
+    # Create thread to automatically receive and queue responses from server.
+    t = threading.Thread(target=client.recvall)
+    t.start()
 
-    # Test if port is None.
-    if port is None:
-        port = client.DEFAULT_CONNECT_PORT
+    # Test if client is not logged in.
+    if not client.logged_in:
+        # Get server response: 220 Ready for new user.
+        while True:
+            response = client.get_response()
+            if response.code == SERVICE_READY:
+                break
 
-    # Connect client to host no default port and receive data response.
-    res = client.connect(host, port)
+        # Perform login with USER and PASS commands.
+        client.login()
 
-    # Test if server response indicates user credentials are needed.
-    if (client.credentials_needed(res)):
-        # Get user credentials from user.
-        user, pswd = System.get_account_info(host, port)
+    wait = System.input()
+    # while True:
+    #     # Get user option.
+    #     args = System.input_args()
 
-        # Send credentials to server.
-        res = client.login(user, pswd)
+    #     if len(args) > 0:
+    #         is_quit = client.run(args)
 
-        # Test if login was unsuccessful.
-        if (not client.login_successful(res)):
-            # Display error and terminate processing.
-            System.exit_('Server response: {0}'.format(res.decode()))
-    else:
-        System.exit_('Server response: {0}'.format(res.decode()))
 
-    System.display('Login Successful.')
-    System.display('Available Commands: ')
+def log(message):
+    '''log(message)
+    Write a log message.'''
 
-    # Display help menu.
-    client.run_help()
+    if logger:
+        logger.write(message)
 
-    # The main processing loop.
-    is_quit = False
-    while not is_quit:
-        # Get list user input args stripped of all whitespace.
-        args = System.input_args()
 
-        # Test arg length is greater than zero.
-        if len(args) > 0:
-            is_quit = client.run(args)
+def encode(data, encoding='utf-8'):
+    try:
+        return data.encode(encoding)
+    except UnicodeEncodeError:
+        return data.encode(DEFAULT_ENCODING)
+
+
+def decode(data, encoding='utf-8'):
+    try:
+        return data.decode(encoding)
+    except UnicodeDecodeError:
+        return data.decode(DEFAULT_ENCODING)
+
+
+class Response:
+
+    def __init__(self, res):
+        self.code, self.message = self.parse(res)
+
+    def __str__(self):
+        return f'{self.code} {self.message}'
+
+    def parse(self, response):
+        '''parse(response) -> (reply code, message)
+        Parse the server response code and message.'''
+
+        # Test if response has not been decoded.
+        if isinstance(response, bytes):
+            res = decode(response).strip()
+        else:
+            res = response.strip()
+
+        # Test if reply code has a message attached.
+        i = res.find(' ')
+        if i > 0:
+            # Parse reply code and message.
+            code = res[:i]
+            message = res[(i+1):]
+        else:
+            code = res
+
+        # Test if reply code is positive integer.
+        try:
+            code = int(code)
+            if code < 0:
+                raise ServerReplyError(
+                    res, "Server reply code is not a positive integer.")
+        except ValueError:
+            raise ServerReplyError(
+                res, "Server response does not start with reply code integer.")
+
+        return code, message
+
+
+SERVICE_READY = 220
+USER_LOGGED_IN = 230
+PASSWORD_NEEDED = 331
 
 
 class Client:
-    DEFAULT_CONNECT_PORT = 21
-    DATA_P1 = 154
-    DATA_P2 = 185
 
-    NEW_USER = 220
-    LOGGED_IN = 230
-    PATHN_CREATED = 257
-    PASSWORD_NEEDED = 331
-    # LOGIN_INCORRECT = 530
+    def __init__(self):
+        self.conn = None
+        self.logged_in = False
+        self.response_queue = []
+        self.response_event = threading.Event()
 
-    QUIT = 'quit'
-    HELP = 'help'
-    LIST = 'ls'
-    PWD = 'pwd'
-    CWD = 'cd'
-    GET = 'get'
-    PUT = 'put'
+    def connect(self, addr):
+        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conn.connect((host, port))
 
-    AVAIL_CMDS = [QUIT, HELP, LIST, PWD, CWD, GET, PUT]
+    def close(self):
+        self.sendall('QUIT')
+        self.conn.close()
 
-    def __init__(self, filename):
-        self.logger = Logger(filename)
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_sock = None
+    def sendall(self, command, value=''):
+        '''sendall(command, value='')
+        Send a command to the server.'''
 
-    #connect(host, port)
-    def connect(self, host, port=DEFAULT_CONNECT_PORT):
-        res = None
+        msg = f'{command} {value}'
+        self.conn.sendall(encode(f'{msg}\r\n'))
+        log(f'Sent: {msg}')
+
+    def recvall(self, bufsize=4096):
+        '''recvall(bufsize=4096)
+        Continuously wait for response data from server. When a response is
+        receiveed, decode it and add it to client's response queue.'''
 
         try:
-            # Connect to host on given port.
-            self.socket.connect((host, port))
-            self.logger.write_log(
-                'Connecting to {0} on port {1}.'.format(host, port))
+            data = b''
+            while True:
+                # Receive some data.
+                res = self.conn.recv(bufsize)
+                data += res
 
-            # Get server response.
-            res = self.get_server_response()
-            self.log_res_received(res)
+                # Test if end of message.
+                if len(res) < bufsize:
+                    # Test for bad server reply.
+                    try:
+                        response = Response(res)
 
-        except TimeoutError as err:
-            self.logger.write_log('A timeout error occurred: {0}'.format(err))
-            System.exit_('A timeout error occurred: {0}'.format(err))
+                        # TODO: remove this.
+                        print(response)
+
+                        log(f'Received: {response}')
+
+                        # Append data to client's response queue.
+                        self.add_response(response)
+                    except ServerReplyError as err:
+                        self.handle_bad_server_reply()
+                        print(err)
+
+                    data = b''
+
+        except KeyboardInterrupt:
+            print('keyboard interrupt - probably thread')
+            System.terminate()
+
+    def handle_bad_server_reply(self):
+        print('The server sent a bad reply. It will be ignored.')
+
+    def add_response(self, response):
+        # Add server response to response queue.
+        self.response_queue.append(response)
+
+        # Test if response event is not set.
+        if not self.response_event.isSet():
+            self.response_event.set()
+
+    def get_response(self):
+        # Wait for server response.
+        if not self.response_queue:
+            self.response_event.wait()
+
+        res = self.response_queue.pop(0)
+
+        # Test if response queue is empty.
+        if not self.response_queue:
+            self.response_event.clear()
 
         return res
 
-    def disconnect(self):
-        discon_str = 'QUIT'
+    def login(self):
+        '''login()
+        Prompt the user for username and password. Attempt to perform user login
+        by sending the USER and PASS commands to the server.'''
 
-        # Send quit.
-        self.socket.send((discon_str + '\r\n').encode())
-        self.log_msg_sent(discon_str)
+        username = System.get_username(host, port)
+        # Send USER command and get server response.
+        self.sendall('USER', username)
+        response = self.get_response()
 
-        # Get server response.
-        res = self.get_server_response()
-        self.log_res_received(res)
+        # Test if server reply code indicates password needed.
+        if response.code == PASSWORD_NEEDED:
+            password = System.get_password()
+            if password:
+                # Send password and get server response.
+                self.sendall('PASS', password)
+                response = self.get_response()
 
-    #login(user, pswd=None)
-    def login(self, user, pswd=None):
-        res = None
-        user_str = 'USER {0}'.format(user)
-
-        try:
-            # Send username.
-            self.socket.send((user_str + '\r\n').encode())
-            self.log_msg_sent(user_str)
-
-            # Get server response.
-            res = self.get_server_response()
-            self.log_res_received(res)
-
-            # Test if reply code indicates password needed.
-            if self.parse_reply_code(res) == self.PASSWORD_NEEDED:
-                # Test if password is given.
-                if pswd is not None:
-                    pass_str = 'PASS {0}'.format(pswd)
-
-                    # Send password.
-                    self.socket.send((pass_str + '\r\n').encode())
-                    self.log_msg_sent(pass_str)
-
-                    # Get server response.
-                    res = self.get_server_response()
-                    self.log_res_received(res)
-
-                else:
-                    self.logger.write_log(
-                        'A password is required for account.')
-                    System.exit_('A password is required for account.')
-
-        except Exception as err:
-            self.logger.write_log('An error occurred: {0}'.format(err))
-            System.exit_('An error occurred: {0}'.format(err))
-
-        return res
-
-    def parse_reply_code(self, res):
-        result = None
-
-        if res is not None:
-            # Test response data type.
-            if isinstance(res, bytes):
-                res_str = res.decode().split(' ')[0]
-
-            elif isinstance(res, str) and len(res) > 0:
-                res_str = res.split(' ')[0]
-
-            try:
-                # Cast code to int.
-                result = int(res_str)
-
-            except Exception:
-                self.logger.write_log('Server reply code unkown.')
-                System.exit_('Server reply code unkown.')
-
-        return result
-
-    def run(self, args=[]):
-        cmd = args[0]
-
-        # Test if command is quit.
-        if self.is_quit(cmd):
-            is_quit = True
-            self.disconnect()
-
-        else:
-            is_quit = False
-
-            # Determine the user command and run.
-            if self.is_help(cmd):
-                self.run_help()
-
-            if self.is_list(cmd):
-                self.run_list(args)
-
-            elif self.is_pwd(cmd):
-                self.run_pwd(args)
-
-            elif self.is_cwd(cmd):
-                self.run_cwd(args)
-
-            elif self.is_get(cmd):
-                self.run_get(args)
-
-            elif self.is_put(cmd):
-                self.run_put(args)
-
-        return is_quit
-
-    # def open_data_chan(self):
-    #     self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #     host_name = socket.gethostname()
-    #     host_addr = socket.gethostbyname(host_name)
-    #     self.data_sock.bind((host_addr, (self.DATA_P1*256) + self.DATA_P2))
-    #     self.data_sock.listen(1)
-
-    def open_data_chan(self, pasv_res):
-        # Parse host and port.
-        host_addr, p1, p2 = self.parse_host_and_port(pasv_res)
-        print('host_addr: ' + host_addr)
-
-        self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_sock.connect((host_addr, (p1*256) + p2))
-
-    def parse_host_and_port(self, res):
-        # Decode response.
-        res_str = res.decode()
-
-        # Get indices of left and right parentheses.
-        left_paren = res_str.find('(') + 1
-        right_paren = res_str.find(')')
-
-        # Split response substring by comma.
-        s = res_str[left_paren:right_paren].split(',')
-
-        # Join host on period.
-        host_addr = '.'.join(s[0:4])
-
-        return host_addr, int(s[4]), int(s[5])
-
-    def display_incoming_data(self):
-        # Accept the connection.
-        conn, addr = self.data_sock.accept()
-
-        incoming_data = True
-        while incoming_data:
-            # Reveive incoming data.
-            data = conn.recv(4096)
-
-            # Test if data was received.
-            if data:
-                System.display(data)
             else:
-                incoming_data = False
+                log('A password is required for account.')
+                System.terminate()
 
-    def send_pasv_cmd(self):
-        pasv_str = 'PASV'
-
-        # Send PASV command.
-        self.socket.send((pasv_str + '\r\n').encode())
-        self.log_msg_sent(pasv_str)
-
-        # Get server response.
-        res = self.get_server_response()
-        self.log_res_received(res)
-
-        return res
-
-    # def send_port_cmd(self):
-        # host_name = socket.gethostname()
-        # host_addr = socket.gethostbyname(host_name)
-        # port_str = 'PORT {0},{1},{2}'.format(
-        #     host_addr.replace('.', ','), self.DATA_P1, self.DATA_P2)
-        # print('port_str: ' + port_str)
-
-        # # Send PORT command.
-        # self.socket.send((port_str + '\r\n').encode())
-        # self.log_msg_sent(port_str)
-
-        # # Get server response.
-        # print('waiting for port reply...')
-        # res = self.get_server_response()
-        # self.log_res_received(res)
-
-    def run_help(self):
-        # Display the list of available commands.
-        System.display('Some commands are abbreviated: ')
-        System.display_list(self.AVAIL_CMDS)
-
-    def run_list(self, args):
-        dirs = ''
-        if len(args) > 1:
-            dirs = ' '.join(args[1:])
-
-        list_str = 'LIST ' + dirs
-
-        # Send PASV command.
-        pasv_res = self.send_pasv_cmd()
-
-        # Open data channel.
-        self.open_data_chan(pasv_res)
-
-        # Get server response.
-        res = self.data_sock.recv(2048)
-        self.log_res_received(res)
-
-        # # Send PORT command.
-        # self.send_port_cmd()
-
-        # Send list command.
-        self.socket.send((list_str + '\r\n').encode())
-        self.log_msg_sent(list_str)
-
-        # Display the requested data.
-        print('skipping data retieval')
-        exit('')
-        # self.display_incoming_data()
-
-        # Get server response.
-        res = self.get_server_response()
-        self.log_res_received(res)
-
-        return res
-
-    def run_pwd(self, args):
-        pwd_str = 'PWD'
-
-        # Send PWD command.
-        self.socket.send((pwd_str + '\r\n').encode())
-        self.log_msg_sent(pwd_str)
-
-        # Get server response.
-        res = self.get_server_response()
-        self.log_res_received(res)
-
-        # Parse reply code.
-        reply_code = self.parse_reply_code(res)
-
-        # Test if code indicates success.
-        if reply_code == self.PATHN_CREATED:
-            # Parse the current directory from response.
-            pwd = res.decode().split('"')[1]
-            System.display(pwd)
-
-        else:
-            System.display(
-                'There was an error while retieving the current directory.')
-
-        return res
-
-    def run_cwd(self, args):
-        #
-        return False
-
-    def run_get(self, args):
-        #
-        return False
-
-    def run_put(self, args):
-        #
-        return False
-
-    def is_quit(self, cmd):
-        return cmd.lower() == self.QUIT.lower()
-
-    def is_help(self, cmd):
-        return cmd.lower() == self.HELP.lower()
-
-    def is_list(self, cmd):
-        return cmd.lower() == self.LIST.lower()
-
-    def is_pwd(self, cmd):
-        return cmd.lower() == self.PWD.lower()
-
-    def is_cwd(self, cmd):
-        return cmd.lower() == self.CWD.lower()
-
-    def is_get(self, cmd):
-        return cmd.lower() == self.GET.lower()
-
-    def is_put(self, cmd):
-        return cmd.lower() == self.PUT.lower()
-
-    def credentials_needed(self, res):
-        return self.parse_reply_code(res) == self.NEW_USER
-
-    def login_successful(self, res):
-        return self.parse_reply_code(res) == self.LOGGED_IN
-
-    def get_server_response(self):
-        return self.socket.recv(2048)
-
-    def log_msg_sent(self, msg):
-        self.logger.write_log('Sent: ' + msg)
-
-    def log_res_received(self, res):
-        self.logger.write_log('Received: ' + repr(res))
+        self.logged_in = True
 
 
 if __name__ == '__main__':
-    main()
+    # Get command line args and initialize logger object..
+    # host, filename, port = System.args()
+    host, filename, port = '10.246.251.93', 'mylog.txt', 21
+    logger = Logger(filename)
+
+    while True:
+        # Connect client to host and begin main processing loop.
+        client = Client()
+        try:
+            client.connect((host, port))
+        except:
+            log("Unable to establish a connection with host.")
+            print("Unable to establish a connection with host.")
+            System.terminate()
+
+        try:
+            main(client, host, port)
+        except KeyboardInterrupt:
+            print('a keyboard interrupt - maybe main?')
+            client.close()
+            System.terminate()
+        except:
+            log("An error occurred while connected to host, restarting service.")
+            print("An error occurred while connected to host, restarting service.")
+            client.close()
