@@ -8,6 +8,7 @@
 
 import sys
 from getpass import getpass
+import math
 
 DEFAULT_PORT = 21
 
@@ -54,7 +55,6 @@ class System:
         print(message)
         System.terminate(True)
 
-
     @staticmethod
     def get_username(host, port):
         '''get_username(host, port) -> username
@@ -69,7 +69,6 @@ class System:
         # return username
         return 'cs472'
 
-
     @staticmethod
     def get_password():
         '''get_password() -> password
@@ -82,55 +81,40 @@ class System:
         return 'hw2ftp'
 
     @staticmethod
-    def display(s):
+    def display(s=''):
         print(s)
 
     @staticmethod
     def display_list(l):
-        mylist = l
-        mylist.sort()
+        '''display_list(l)
+        Display a columnized list to the console.'''
 
         line = ''
-        for s in mylist:
-            line += s + '\t\t'
+        num_items = len(l)
+        num_cols = 3
+        num_rows = math.ceil(num_items/num_cols)
+        item_index = 0
+        for i in range(num_rows):
+            for _ in range(num_cols):
+                if item_index < num_items:
+                    line += l[item_index] + '\t\t'
+                    item_index += num_rows
+            if i < num_rows - 1:
+                line += '\n'
+                item_index = i + 1
 
         print(line)
 
     @staticmethod
-    def input(s=None):
-        try:
-            # Get user input.
-            if s:
-                result = input(s)
-            else:
-                result = input('ftp> ')
-
-        except KeyboardInterrupt:
-            System.terminate()
-
-        return result.strip()
-
-    @staticmethod
-    def input_args(s=None):
-        result = []
-
-        # Get raw input args.
-        raw = System.input(s).split(' ')
-
-        for a in raw:
-            a = a.strip()
-            if len(a) > 0:
-                result.append(a)
-
-        return result
-
+    def input(prompt='ftp> '):
+        return input(prompt).strip()
 
     @staticmethod
     def terminate(is_arg_error=False):
         '''terminate(is_arg_error=False)
         Terminate the program. If the termination is due to an argument error,
         then write the correct usage of the program to the console.'''
-        
+
         if is_arg_error:
             print('Usage: ftpclient [HOST] [FILENAME] [Optional: PORT]')
 
