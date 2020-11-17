@@ -9,6 +9,7 @@
 import sys
 from getpass import getpass
 import math
+import random
 
 DEFAULT_PORT = 21
 
@@ -108,6 +109,22 @@ class System:
     @staticmethod
     def input(prompt='ftp> '):
         return input(prompt).strip()
+    
+    @staticmethod
+    def randint(a, b):
+        return random.randint(a, b)
+
+    @staticmethod
+    def write_file(path, content):
+        with open(path, mode='w') as f:
+            f.write(content)
+
+    @staticmethod
+    def read_file(path):
+        with open(path, mode='r') as f:
+            data = f.read()
+
+        return data
 
     @staticmethod
     def terminate(is_arg_error=False):
